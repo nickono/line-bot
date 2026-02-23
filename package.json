@@ -1,0 +1,14 @@
+{
+  "name": "sushitaka-delivery-bot",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "axios": "^1.6.8",
+    "@line/bot-sdk": "^9.7.0",
+    "@google-cloud/vision": "^5.0.0"
+  }
+}
