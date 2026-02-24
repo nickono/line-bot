@@ -18,6 +18,35 @@ const {
   buildSlipKey
 } = require('./utils/parser');
 
+const { 
+  logJson, 
+  clipText 
+} = require('./utils/log');
+
+// ==========================
+// ★安全装置：環境変数のサニティチェック（Fail Fast）
+// ==========================
+if (!process.env.LINE_ACCESS_TOKEN || !process.env.LINE_CHANNEL_SECRET) {
+  console.error("🚨 [起動エラー] LINEのアクセスキーが読み込めません！ .env ファイルを確認してください。");
+  process.exit(1); // 危険なのでサーバー起動を強制ストップ
+}
+// ==========================
+
+// ==========================
+// ★安全装置：モジュール読み込みチェック（Fail Fast）
+// ==========================
+const parserFns = { parseSlip, normalizeForJudge, extractDeliverDateKey, extractTimeSlot, buildSlipKey };
+const logFns = { logJson, clipText };
+const allFns = { ...parserFns, ...logFns }; // 2つの部品箱を合体させて一斉チェック！
+
+for (const [funcName, funcBody] of Object.entries(allFns)) {
+  if (typeof funcBody !== 'function') {
+    console.error(`🚨 [起動エラー] 外部ファイルから '${funcName}' が読み込めません！export漏れやタイポがないか確認してください。`);
+    process.exit(1); 
+  }
+}
+// ==========================
+
 // ==== ENV ====
 const {
   LINE_CHANNEL_SECRET,
@@ -59,22 +88,9 @@ function getUserState(userId) {
 
 // ================= logging helpers =================
 
-// Cloud Logging で「検索しやすく」「1ログ=1行」で出すためのユーティリティ
-function logJson(tag, obj) {
-  try {
-    // 1行JSONにして改行分割を防ぐ
-    console.log(JSON.stringify({ tag, ...obj, ts: new Date().toISOString() }));
-  } catch (e) {
-    console.log(`[${tag}] (logJson failed)`, e?.message || e);
-  }
-}
+// Cloud Logging で「検索しやすく」「1ログ=1行」で出すためのユーティリティ　→ utils/log.js
 
-// 長すぎるOCRはログ上限対策で軽くカット（必要なら増やしてOK）
-function clipText(s, max = 12000) {
-  const str = String(s || '');
-  if (str.length <= max) return str;
-  return str.slice(0, max) + ` ...[clipped ${str.length - max} chars]`;
-}
+// 長すぎるOCRはログ上限対策で軽くカット（必要なら増やしてOK）→ utils/log.js
 
 // ==== Webhook ====
 app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
