@@ -3,10 +3,6 @@
 console.log("BOOT VERSION: 2026-02-22-OCR-FILTER-DATE-TAKE-NOADDR-NOSLIPNO-FLEX-DONE-B-SINGLETIME-LOGJSON");
 
 const express = require('express');
-const crypto = require('crypto');
-const axios = require('axios');
-const line = require('@line/bot-sdk');
-const vision = require('@google-cloud/vision');
 
 const app = express();
 
@@ -23,6 +19,27 @@ const {
   clipText 
 } = require('./utils/log');
 
+// ★ 新しく追加
+const {
+  buildDeliveryFlex
+} = require('./utils/flex');
+
+// ★ 新しく追加
+const {
+  decideBasePointForSorting,
+  sortSlips
+} = require('./utils/sorter');
+
+// ★ 新しく追加
+const {
+  verifySignature,
+  safeReply,
+  safeReplyFlex,
+  getLineImageContentBuffer
+} = require('./utils/line');
+
+const { ocrWithVision } = require('./utils/vision');
+
 // ==========================
 // ★安全装置：環境変数のサニティチェック（Fail Fast）
 // ==========================
@@ -37,7 +54,13 @@ if (!process.env.LINE_ACCESS_TOKEN || !process.env.LINE_CHANNEL_SECRET) {
 // ==========================
 const parserFns = { parseSlip, normalizeForJudge, extractDeliverDateKey, extractTimeSlot, buildSlipKey };
 const logFns = { logJson, clipText };
-const allFns = { ...parserFns, ...logFns }; // 2つの部品箱を合体させて一斉チェック！
+const flexFns = { buildDeliveryFlex }; // ★ 追加
+const sorterFns = { decideBasePointForSorting, sortSlips }; // ★ 追加
+// ★ 2つのモジュールを追加
+const lineFns = { verifySignature, safeReply, safeReplyFlex, getLineImageContentBuffer };
+const visionFns = { ocrWithVision };
+// ★ 全部合体
+const allFns = { ...parserFns, ...logFns, ...flexFns, ...sorterFns, ...lineFns, ...visionFns };
 
 for (const [funcName, funcBody] of Object.entries(allFns)) {
   if (typeof funcBody !== 'function') {
@@ -60,9 +83,6 @@ const {
 if (!LINE_CHANNEL_SECRET || !LINE_ACCESS_TOKEN) {
   console.error('Missing env: LINE_CHANNEL_SECRET / LINE_ACCESS_TOKEN');
 }
-
-const lineClient = new line.Client({ channelAccessToken: LINE_ACCESS_TOKEN });
-const visionClient = new vision.ImageAnnotatorClient();
 
 // ==========================
 // state (メモリ保持)
@@ -286,6 +306,28 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           _dateKey: thisDateKey || '',
         };
 
+        // ==========================
+        // ★ バグ退治＆機能追加：二重登録のブロック（Fail Fast）
+        // ==========================
+        // 1. すでに未配達リストに入っているか？
+        const isAlreadyPending = st.slips.some(s => s.key === slip.key);
+        if (isAlreadyPending) {
+          logJson('FILTER_DUPLICATE_PENDING', { userId, messageId, slipKey: slip.key });
+          await safeReply(replyToken, '⚠️ この伝票はすでに「未配達リスト」に登録済みだよ！\n「配達順」と送って確認してみてね。');
+          continue; // リストに入れずにここで処理をストップ
+        }
+
+        // 2. すでに配達完了（done）になっているか？
+        const isAlreadyDone = st.done.has(slip.key);
+        if (isAlreadyDone) {
+          logJson('FILTER_DUPLICATE_DONE', { userId, messageId, slipKey: slip.key });
+          await safeReply(replyToken, '📦✨ この伝票はすでに「配達完了」になっているよ！');
+          continue; // リストに入れずにここで処理をストップ
+        }
+        // ==========================
+
+        // ↓ 元からある行（ここへ到達するのは新規伝票だけになる！）
+
         st.slips.push(slip);
 
         logJson('SLIP_ADDED', {
@@ -321,298 +363,11 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
   }
 });
 
-// ================= helpers =================
+// ================= helpers ================= → line.js & vision.js
 
-function verifySignature(body, sig, secret) {
-  try {
-    const h = crypto.createHmac('sha256', secret).update(body).digest('base64');
-    return h === sig;
-  } catch (e) {
-    console.error('verifySignature error:', e);
-    return false;
-  }
-}
+// ================= sorting ================= → sorter.js
 
-async function safeReply(token, text) {
-  if (!token) return;
-  try {
-    await lineClient.replyMessage(token, { type: 'text', text: String(text).slice(0, 4900) });
-  } catch (e) {
-    const msg = e?.originalError?.response?.data
-      ? JSON.stringify(e.originalError.response.data)
-      : e?.message;
-    console.error('LINE reply failed:', msg);
-  }
-}
-
-async function safeReplyFlex(token, contents) {
-  if (!token) return;
-  try {
-    await lineClient.replyMessage(token, {
-      type: 'flex',
-      altText: '配達順',
-      contents,
-    });
-  } catch (e) {
-    const msg = e?.originalError?.response?.data
-      ? JSON.stringify(e.originalError.response.data)
-      : e?.message;
-    console.error('LINE flex reply failed:', msg);
-  }
-}
-
-async function getLineImageContentBuffer(id) {
-  const r = await axios.get(`https://api-data.line.me/v2/bot/message/${id}/content`, {
-    responseType: 'arraybuffer',
-    headers: { Authorization: `Bearer ${LINE_ACCESS_TOKEN}` },
-    timeout: 30000,
-  });
-  return Buffer.from(r.data);
-}
-
-async function ocrWithVision(buf) {
-  try {
-    const [r] = await visionClient.textDetection({ image: { content: buf } });
-    return r.textAnnotations?.[0]?.description || '';
-  } catch (e) {
-    console.error('Vision OCR error:', e?.message || e);
-    return '';
-  }
-}
-
-// ================= sorting =================
-
-async function decideBasePointForSorting(st) {
-  const useLive = String(USE_LIVE_LOCATION || '') === '1';
-  if (useLive && st.lastLocation && isFreshLocation(st.lastLocation)) {
-    return { type: 'live', ...st.lastLocation };
-  }
-  return { type: 'sushitaka', address: SUSHITAKA_ADDRESS || 'すし貴 宮崎' };
-}
-
-function isFreshLocation(loc) {
-  const now = Date.now();
-  return loc && (now - (loc.updatedAt || 0) < 1000 * 60 * 30);
-}
-
-async function sortSlips(slips, basePoint) {
-  // ① 時間枠順（不明は最後）
-  const groups = groupBy(slips, s => s.timeSlot || '99:99-99:99');
-  const slotKeys = Object.keys(groups).sort((a, b) => slotToNumber(a) - slotToNumber(b));
-
-  const ordered = [];
-  for (const slot of slotKeys) {
-    const arr = groups[slot];
-
-    // ② 同じ時間枠内：APIキーがある場合は距離順、無ければ登録順
-    const arrWithDist = await attachDistance(arr, basePoint);
-    arrWithDist.sort((x, y) => (x._distValue ?? 1e15) - (y._distValue ?? 1e15));
-    ordered.push(...arrWithDist);
-  }
-  return ordered;
-}
-
-function slotToNumber(slot) {
-  // "10:30-11:30" も "10:30(指定)" も先頭のHH:MMでソートできる
-  const m = String(slot || '').match(/^(\d{2}):(\d{2})/);
-  if (!m) return 999999;
-  return Number(m[1]) * 100 + Number(m[2]);
-}
-
-function groupBy(arr, keyFn) {
-  const m = {};
-  for (const x of arr) {
-    const k = keyFn(x);
-    if (!m[k]) m[k] = [];
-    m[k].push(x);
-  }
-  return m;
-}
-
-// optional: Distance Matrix（あれば精度UP）
-async function attachDistance(slips, basePoint) {
-  if (!GOOGLE_MAPS_API_KEY) {
-    return slips.map(s => ({ ...s, _distText: '', _distValue: null, _durationText: '' }));
-  }
-
-  const origins = buildOriginParam(basePoint);
-  const destinations = slips.map(s => (s.address || '').trim()).filter(Boolean);
-
-  if (!origins || !destinations.length) {
-    return slips.map(s => ({ ...s, _distText: '', _distValue: null, _durationText: '' }));
-  }
-
-  try {
-    const url = 'https://maps.googleapis.com/maps/api/distancematrix/json';
-    const res = await axios.get(url, {
-      params: {
-        origins,
-        destinations: destinations.join('|'),
-        key: GOOGLE_MAPS_API_KEY,
-        language: 'ja',
-        region: 'jp',
-      },
-      timeout: 20000,
-    });
-
-    const els = res.data?.rows?.[0]?.elements || [];
-    const mapByAddr = new Map();
-
-    for (let i = 0; i < destinations.length; i++) {
-      const el = els[i];
-      if (el?.status === 'OK') {
-        mapByAddr.set(destinations[i], {
-          text: el.distance?.text || '',
-          value: el.distance?.value ?? null,
-          durationText: el.duration?.text || '',
-        });
-      }
-    }
-
-    return slips.map(s => {
-      const addr = (s.address || '').trim();
-      const d = mapByAddr.get(addr);
-      return {
-        ...s,
-        _distText: d ? d.text : '',
-        _distValue: d ? d.value : null,
-        _durationText: d ? d.durationText : '',
-      };
-    });
-  } catch (e) {
-    console.error('Distance Matrix error:', e?.message || e);
-    return slips.map(s => ({ ...s, _distText: '', _distValue: null, _durationText: '' }));
-  }
-}
-
-function buildOriginParam(basePoint) {
-  if (!basePoint) return '';
-  if (basePoint.type === 'live' && isFinite(basePoint.lat) && isFinite(basePoint.lng)) {
-    return `${basePoint.lat},${basePoint.lng}`;
-  }
-  if (basePoint.type === 'sushitaka' && basePoint.address) {
-    return basePoint.address;
-  }
-  return '';
-}
-
-// ================= Flex =================
-
-function buildDeliveryFlex(slips, basePoint) {
-  const title = basePoint?.type === 'live' ? '配達順（現在地基準）' : '配達順（すし貴基準）';
-  const bubbles = slips.slice(0, 9).map((s, i) => buildSlipBubble(s, i + 1));
-
-  return {
-    type: 'carousel',
-    contents: [
-      buildSummaryBubble(title, slips, basePoint),
-      ...bubbles,
-    ].slice(0, 10),
-  };
-}
-
-function buildSummaryBubble(title, slips, basePoint) {
-  const baseLine = basePoint?.type === 'live'
-    ? `基準: 現在地 (${basePoint.lat?.toFixed(4)}, ${basePoint.lng?.toFixed(4)})`
-    : `基準: ${SUSHITAKA_ADDRESS || 'すし貴'}`;
-
-  const slots = [...new Set(slips.map(s => s.timeSlot || '(不明)'))].slice(0, 6).join(' / ');
-
-  return {
-    type: 'bubble',
-    body: {
-      type: 'box',
-      layout: 'vertical',
-      spacing: 'md',
-      contents: [
-        { type: 'text', text: title, weight: 'bold', size: 'lg', wrap: true },
-        { type: 'text', text: `未配達: ${slips.length}件`, size: 'sm', color: '#666666' },
-        { type: 'text', text: baseLine, size: 'sm', color: '#666666', wrap: true },
-        { type: 'text', text: `時間: ${slots}`, size: 'sm', color: '#666666', wrap: true },
-        { type: 'separator' },
-        { type: 'text', text: '・ナビ→地図\n・完了→配達済みにして更新', size: 'sm', wrap: true },
-      ],
-    },
-    footer: {
-      type: 'box',
-      layout: 'vertical',
-      spacing: 'sm',
-      contents: [
-        { type: 'button', style: 'primary', action: { type: 'postback', label: '一覧を再表示', data: 'list' } },
-        { type: 'button', style: 'secondary', action: { type: 'postback', label: 'リセット', data: 'reset' } },
-      ],
-    },
-  };
-}
-
-function buildSlipBubble(s, indexNo) {
-  const timeLine = s.timeSlot ? `⏰ ${s.timeSlot}` : '⏰ (時間枠不明)';
-  const nameLine = s.name || '(名前不明)';
-  const addrLine = s.address || '(住所不明)';
-
-  const mapsUrl = buildGoogleMapsUrl(addrLine);
-
-  const body = [
-    { type: 'text', text: `${indexNo}. ${timeLine}`, weight: 'bold', size: 'md', wrap: true },
-    { type: 'text', text: nameLine, size: 'md', wrap: true },
-    { type: 'text', text: addrLine, size: 'sm', color: '#555555', wrap: true },
-  ];
-
-  if (s._distText) {
-    body.push({
-      type: 'text',
-      text: `距離: ${s._distText}${s._durationText ? ` / ${s._durationText}` : ''}`,
-      size: 'sm',
-      color: '#555555',
-      wrap: true,
-    });
-  }
-
-  if (s.phone) {
-    body.push({ type: 'text', text: `TEL: ${s.phone}`, size: 'sm', color: '#555555', wrap: true });
-  } else {
-    body.push({ type: 'text', text: 'TEL: (不明)', size: 'sm', color: '#555555', wrap: true });
-  }
-
-  // ★④ 伝票番号はカルーセルに含めない（もともとの表示ブロックは入れない）
-
-  const footerContents = [
-    { type: 'button', style: 'primary', action: { type: 'uri', label: 'ナビ（Googleマップ）', uri: mapsUrl } },
-  ];
-
-  // タップ発信（数字だけ抽出してtel:へ）
-  const tel = toTelUri(s.phone);
-  if (tel) {
-    footerContents.push({
-      type: 'button',
-      style: 'secondary',
-      action: { type: 'uri', label: '電話する', uri: tel },
-    });
-  }
-
-  footerContents.push({
-    type: 'button',
-    style: 'secondary',
-    action: { type: 'postback', label: 'この配達を完了', data: `done:${s.key}` },
-  });
-
-  return {
-    type: 'bubble',
-    body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: body },
-    footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: footerContents },
-  };
-}
-
-function buildGoogleMapsUrl(address) {
-  const q = encodeURIComponent(String(address || '').trim());
-  return `https://www.google.com/maps/search/?api=1&query=${q}`;
-}
-
-function toTelUri(phone) {
-  const digits = String(phone || '').replace(/[^\d]/g, '');
-  if (!digits) return '';
-  return `tel:${digits}`;
-}
+// ================= Flex =================　→ flex.js
 
 // ==== health check ====
 app.get('/', (_, res) => res.status(200).send('ok'));
