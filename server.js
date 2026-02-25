@@ -156,11 +156,8 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           }
           st.done.add(key);
 
+          // ★そのまま：未配達（pending）だけを残して画面から消す
           const pending = st.slips.filter(s => !st.done.has(s.key));
-          if (!pending.length) {
-            await safeReply(replyToken, '🎉 全部完了！');
-            continue;
-          }
 
           const base = await decideBasePointForSorting(st);
           const ordered = await sortSlips(pending, base);
@@ -169,13 +166,13 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         }
 
         if (data === 'list') {
-          const pending = st.slips.filter(s => !st.done.has(s.key));
-          if (!pending.length) {
-            await safeReply(replyToken, '未配達がないよ！全部完了👏');
+          if (!st.slips.length) {
+            await safeReply(replyToken, 'まだ伝票が登録されていません！');
             continue;
           }
+          // ★修正：「一覧を再表示」のときは、完了済みも含めて全件（st.slips）を復活させる！
           const base = await decideBasePointForSorting(st);
-          const ordered = await sortSlips(pending, base);
+          const ordered = await sortSlips(st.slips, base);
           await safeReplyFlex(replyToken, buildDeliveryFlex(ordered, base));
           continue;
         }
@@ -208,13 +205,14 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         const text = (event.message.text || '').trim();
 
         if (/^(配達順|配達|一覧)$/.test(text)) {
-          const pending = st.slips.filter(s => !st.done.has(s.key));
-          if (!pending.length) {
-            await safeReply(replyToken, '未配達がないよ！まず伝票画像を送ってね。');
+          // ★修正：全件がゼロ件かどうかだけ確認
+          if (!st.slips.length) {
+            await safeReply(replyToken, 'まだ伝票が登録されていません！画像を送ってね。');
             continue;
           }
+          // ★修正：st.slips（全件）を渡す
           const base = await decideBasePointForSorting(st);
-          const ordered = await sortSlips(pending, base);
+          const ordered = await sortSlips(st.slips, base);
           await safeReplyFlex(replyToken, buildDeliveryFlex(ordered, base));
           continue;
         }
@@ -344,14 +342,20 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           total: st.slips.length,
         });
 
+        // （上略： st.slips.push(slip); の直後にある以下の部分を書き換えます）
+
         await safeReply(
           replyToken,
-          `登録したよ✅\n` +
-          `時間: ${timeSlot || '(不明)'}\n` +
-          `名前: ${slip.name || '(不明)'}\n` +
-          `住所: ${slip.address || '(不明)'}\n` +
-          `TEL: ${slip.phone || '(不明)'}\n\n` +
-          `次に「配達順」と送ってね。`
+          `✅ ${st.slips.length}件目をリストに登録しました！\n\n` +
+          `⏰ 時間: ${timeSlot || '(不明)'}\n` +
+          `👤 名前: ${slip.name || '(不明)'}\n` +
+          `🏠 住所: ${slip.address || '(不明)'}\n` +
+          `📞 TEL: ${slip.phone || '(不明)'}\n\n` +
+          `────────────────\n` +
+          `📷 まだ伝票がある場合：\n` +
+          `続けて次の伝票の写真を送ってください。\n\n` +
+          `🚗 出発する場合：\n` +
+          `「配達順」と送ってルートを出してください。`
         );
         continue;
       }

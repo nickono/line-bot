@@ -82,23 +82,28 @@ function buildSlipBubble(s, indexNo) {
     body.push({ type: 'text', text: 'TEL: (不明)', size: 'sm', color: '#555555', wrap: true });
   }
 
+  // （上略：bodyの定義などが終わった後）
+
   const footerContents = [
-    { type: 'button', style: 'primary', action: { type: 'uri', label: 'ナビ（Googleマップ）', uri: mapsUrl } },
+    // ★変更①：🚗 ナビ起動
+    { type: 'button', style: 'primary', action: { type: 'uri', label: '🚗ナビ起動', uri: mapsUrl } },
   ];
 
   const tel = toTelUri(s.phone);
   if (tel) {
     footerContents.push({
+      // ★変更②：📞 TEL
       type: 'button',
       style: 'secondary',
-      action: { type: 'uri', label: '電話する', uri: tel },
+      action: { type: 'uri', label: '📞 TEL', uri: tel },
     });
   }
 
   footerContents.push({
+    // ★変更③：✅ 配達完了
     type: 'button',
     style: 'secondary',
-    action: { type: 'postback', label: 'この配達を完了', data: `done:${s.key}` },
+    action: { type: 'postback', label: '✅ 配達完了', data: `done:${s.key}` },
   });
 
   return {
