@@ -40,7 +40,8 @@ const {
 
 const { ocrWithVision } = require('./utils/vision');
 
-const { testConnection } = require('./utils/sheets');
+const { testConnection, appendSlip } = require('./utils/sheets');
+
 testConnection();
 
 // ==========================
@@ -330,6 +331,10 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         // ↓ 元からある行（ここへ到達するのは新規伝票だけになる！）
 
         st.slips.push(slip);
+
+        // ボット君がここを通ったか確認する目印
+        console.log('🍎 DB班に書き込みを依頼します！');
+        await appendSlip(slip);
 
         logJson('SLIP_ADDED', {
           userId,
