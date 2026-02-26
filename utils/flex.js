@@ -125,7 +125,84 @@ function toTelUri(phone) {
   return `tel:${digits}`;
 }
 
+// 新規追加：読み取った1件の伝票データから、LINE用の綺麗なカードを作る関数
+// 新規追加：読み取った1件の伝票データから、LINE用の綺麗なカードを作る関数
+function createDeliveryCard(slip) {
+return {
+type: "bubble",
+size: "mega",
+header: {
+type: "box",
+layout: "vertical",
+contents: [
+{
+type: "text",
+text: "🚚 新規配達伝票",
+weight: "bold",
+color: "#ffffff",
+size: "md"
+}
+],
+backgroundColor: "#27ACB2"
+},
+body: {
+type: "box",
+layout: "vertical",
+spacing: "sm",
+contents: [
+{
+type: "text",
+text: slip.timeSlot || "時間指定なし",
+weight: "bold",
+size: "xl",
+color: "#e54560"
+},
+{
+type: "text",
+text: slip.name || "名前なし",
+weight: "bold",
+size: "md",
+wrap: true
+},
+{
+type: "text",
+text: slip.address || "住所なし",
+size: "sm",
+wrap: true,
+color: "#666666"
+},
+{
+type: "text",
+text: slip.phone || "電話番号なし",
+size: "sm",
+color: "#666666"
+}
+]
+},
+footer: {
+type: "box",
+layout: "vertical",
+spacing: "sm",
+contents: [
+{
+type: "button",
+style: "primary",
+height: "sm",
+color: "#0367D3",
+action: {
+type: "message",
+label: "配達完了にする",
+text: "配達完了：" + slip.key
+}
+}
+],
+flex: 0
+}
+};
+}
+
 // 外の世界（server.js）に出荷
 module.exports = {
-  buildDeliveryFlex
+buildDeliveryFlex,
+createDeliveryCard
 };

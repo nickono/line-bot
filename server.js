@@ -32,17 +32,20 @@ const {
 
 // ★ 新しく追加
 const {
-  verifySignature,
-  safeReply,
-  safeReplyFlex,
-  getLineImageContentBuffer
+verifySignature,
+safeReply,
+safeReplyFlex,
+safeReplyMulti,
+getLineImageContentBuffer
 } = require('./utils/line');
 
 const { ocrWithVision } = require('./utils/vision');
 
 const { testConnection, appendSlip } = require('./utils/sheets');
 
-testConnection();
+const { createDeliveryCard } = require('./utils/flex');
+
+//testConnection();
 
 // ==========================
 // ★安全装置：環境変数のサニティチェック（Fail Fast）
@@ -352,19 +355,31 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
 
         // （上略： st.slips.push(slip); の直後にある以下の部分を書き換えます）
 
-        await safeReply(
-          replyToken,
-          `✅ ${st.slips.length}件目をリストに登録しました！\n\n` +
-          `⏰ 時間: ${timeSlot || '(不明)'}\n` +
-          `👤 名前: ${slip.name || '(不明)'}\n` +
-          `🏠 住所: ${slip.address || '(不明)'}\n` +
-          `📞 TEL: ${slip.phone || '(不明)'}\n\n` +
-          `────────────────\n` +
-          `📷 まだ伝票がある場合：\n` +
-          `続けて次の伝票の写真を送ってください。\n\n` +
-          `🚗 出発する場合：\n` +
-          `「配達順」と送ってルートを出してください。`
-        );
+        const cardMessage = createDeliveryCard(slip);
+
+        await safeReplyMulti(replyToken, [
+        {
+        type: "flex",
+        altText: "新規配達伝票",
+        contents: cardMessage
+        },
+        {
+        type: "text",
+        text: "📸 続けて次の伝票の写真を送ってください。\n\nすべて登録し終わったら、下のボタンを押してルートを出しましょう！",
+        quickReply: {
+        items: [
+        {
+        type: "action",
+        action: {
+        type: "message",
+        label: "🗺️ 配達順を表示",
+        text: "配達順"
+        }
+        }
+      ]
+    }
+  }
+]);
         continue;
       }
 

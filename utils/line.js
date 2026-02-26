@@ -47,6 +47,18 @@ async function safeReplyFlex(token, contents) {
   }
 }
 
+async function safeReplyMulti(token, messages) {
+if (!token) return;
+try {
+await lineClient.replyMessage(token, messages);
+} catch (e) {
+const msg = e?.originalError?.response?.data
+? JSON.stringify(e.originalError.response.data)
+: e?.message;
+console.error('LINE multi-reply failed:', msg);
+}
+}
+
 async function getLineImageContentBuffer(id) {
   const r = await axios.get(`https://api-data.line.me/v2/bot/message/${id}/content`, {
     responseType: 'arraybuffer',
@@ -60,5 +72,6 @@ module.exports = {
   verifySignature,
   safeReply,
   safeReplyFlex,
-  getLineImageContentBuffer
+  getLineImageContentBuffer, 
+  safeReplyMulti
 };
