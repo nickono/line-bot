@@ -40,6 +40,9 @@ const {
 
 const { ocrWithVision } = require('./utils/vision');
 
+const { testConnection } = require('./utils/sheets');
+testConnection();
+
 // ==========================
 // ★安全装置：環境変数のサニティチェック（Fail Fast）
 // ==========================
