@@ -188,7 +188,7 @@ contents: [
 type: "button",
 style: "primary",
 height: "sm",
-color: "#0367D3",
+color: "#06C755",
 action: {
 type: "message",
 label: "配達完了にする",
@@ -201,8 +201,55 @@ flex: 0
 };
 }
 
+// 新規追加：次のアクション（配達順表示）を促す巨大ボタンカードを作る関数
+function createNextActionCard() {
+return {
+type: "bubble",
+size: "kilo",
+body: {
+type: "box",
+layout: "vertical",
+spacing: "md",
+contents: [
+{
+type: "text",
+text: "📸 続けて次の伝票の写真を送ってください。",
+wrap: true,
+weight: "bold",
+size: "md",
+color: "#333333"
+},
+{
+type: "text",
+text: "すべて登録し終わったら、下のボタンを押して出発しましょう！👇",
+wrap: true,
+size: "sm",
+color: "#666666"
+}
+]
+},
+footer: {
+type: "box",
+layout: "vertical",
+contents: [
+{
+type: "button",
+style: "primary",
+color: "#06C755",
+action: {
+type: "message",
+label: "🗺️ 配達順を表示",
+text: "配達順"
+}
+}
+]
+}
+};
+}
+
 // 外の世界（server.js）に出荷
 module.exports = {
 buildDeliveryFlex,
-createDeliveryCard
+createDeliveryCard,
+createNextActionCard
 };

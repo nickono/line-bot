@@ -43,7 +43,7 @@ const { ocrWithVision } = require('./utils/vision');
 
 const { testConnection, appendSlip } = require('./utils/sheets');
 
-const { createDeliveryCard } = require('./utils/flex');
+const { createDeliveryCard, createNextActionCard } = require('./utils/flex');
 
 //testConnection();
 
@@ -356,28 +356,18 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         // （上略： st.slips.push(slip); の直後にある以下の部分を書き換えます）
 
         const cardMessage = createDeliveryCard(slip);
+const nextActionCard = createNextActionCard();
 
-        await safeReplyMulti(replyToken, [
-        {
-        type: "flex",
-        altText: "新規配達伝票",
-        contents: cardMessage
-        },
-        {
-        type: "text",
-        text: "📸 続けて次の伝票の写真を送ってください。\n\nすべて登録し終わったら、下のボタンを押してルートを出しましょう！",
-        quickReply: {
-        items: [
-        {
-        type: "action",
-        action: {
-        type: "message",
-        label: "🗺️ 配達順を表示",
-        text: "配達順"
-        }
-        }
-      ]
-    }
+await safeReplyMulti(replyToken, [
+  {
+    type: "flex",
+    altText: "新規配達伝票",
+    contents: cardMessage
+  },
+  {
+    type: "flex",
+    altText: "次のアクション",
+    contents: nextActionCard
   }
 ]);
         continue;
