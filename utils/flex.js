@@ -66,16 +66,6 @@ function buildSlipBubble(s, indexNo) {
     { type: 'text', text: addrLine, size: 'sm', color: '#555555', wrap: true },
   ];
 
-  if (s._distText) {
-    body.push({
-      type: 'text',
-      text: `距離: ${s._distText}${s._durationText ? ` / ${s._durationText}` : ''}`,
-      size: 'sm',
-      color: '#555555',
-      wrap: true,
-    });
-  }
-
   if (s.phone) {
     body.push({ type: 'text', text: `TEL: ${s.phone}`, size: 'sm', color: '#555555', wrap: true });
   } else {
