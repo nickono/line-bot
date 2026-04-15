@@ -4,8 +4,8 @@
 const axios = require('axios'); // 距離計算のAPI通信に必要
 
 // すし貴の座標（ハードコード）
-const SUSHITAKA_LAT = 31.9322;
-const SUSHITAKA_LNG = 131.4142;
+const SUSHITAKA_LAT = 31.93130;
+const SUSHITAKA_LNG = 131.41403;
 
 // ================= sorting =================
 
