@@ -28,22 +28,79 @@ function isFreshLocation(loc) {
   return loc && (now - (loc.updatedAt || 0) < 1000 * 60 * 30);
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 全スリップのジオコーディングをまとめて行う
+async function geocodeAllSlips(slips) {
+  const results = [];
+  for (const s of slips) {
+    const addr = (s.address || '').trim();
+    let lat = null, lng = null;
+    if (addr) {
+      const coords = await geocodeNominatim(addr);
+      if (coords) { lat = coords.lat; lng = coords.lng; }
+      await sleep(300); // レート制限対策
+    }
+    results.push({ ...s, _lat: lat, _lng: lng, _distText: '', _distValue: null, _durationText: '' });
+  }
+  return results;
+}
+
+// 時間枠番号でグループ化
+function groupBySlotNumber(slips) {
+  const m = {};
+  for (const s of slips) {
+    const k = slotToNumber(s.timeSlot || '99:99-99:99');
+    if (!m[k]) m[k] = [];
+    m[k].push(s);
+  }
+  return m;
+}
+
 async function sortSlips(slips, basePoint) {
-  // ① 時間枠順（不明は最後）— 数値キーでグループ化して '10:30-11:30' と '10:30(指定)' を同一グループに統合
-  const groups = groupBy(slips, s => slotToNumber(s.timeSlot || '99:99-99:99'));
-  const slotKeys = Object.keys(groups)
-    .map(Number)
-    .sort((a, b) => a - b);
+  // ① 全スリップのジオコーディング（一括）
+  const geocoded = await geocodeAllSlips(slips);
+
+  // ② 時間枠でグループ化
+  const groups = groupBySlotNumber(geocoded);
+  const slotNumbers = Object.keys(groups).map(Number).sort((a, b) => a - b);
+
+  // ③ 起点の初期値はすし貴
+  let currentLat = basePoint?.lat ?? SUSHITAKA_LAT;
+  let currentLng = basePoint?.lng ?? SUSHITAKA_LNG;
 
   const ordered = [];
-  for (const slot of slotKeys) {
-    const arr = groups[slot];
 
-    // ② 同じ時間枠内：APIキーがある場合は距離順、無ければ登録順
-    const arrWithDist = await attachDistance(arr, basePoint);
-    arrWithDist.sort((x, y) => (x._distValue ?? 1e15) - (y._distValue ?? 1e15));
-    ordered.push(...arrWithDist);
+  for (const num of slotNumbers) {
+    let remaining = [...groups[num]];
+
+    while (remaining.length > 0) {
+      // 現在の起点から各配達先までのハーバーサイン距離を計算
+      // _lat/_lng が取得できなかったものは最後尾に回す
+      remaining.forEach(s => {
+        s._distValue = (s._lat != null && s._lng != null)
+          ? haversineMeters(currentLat, currentLng, s._lat, s._lng)
+          : 1e15;
+      });
+
+      // 最近の1件を選ぶ
+      remaining.sort((a, b) => a._distValue - b._distValue);
+      const nearest = remaining[0];
+      ordered.push(nearest);
+
+      // 起点を更新
+      if (nearest._lat != null && nearest._lng != null) {
+        currentLat = nearest._lat;
+        currentLng = nearest._lng;
+      }
+
+      // 選んだ1件を remaining から除外
+      remaining = remaining.slice(1);
+    }
   }
+
   return ordered;
 }
 
@@ -75,8 +132,8 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Nominatim でジオコーディング（フォールバック用）
-async function geocodeWithNominatim(address) {
+// Nominatim でジオコーディング
+async function geocodeNominatim(address) {
   try {
     const res = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: { q: address, format: 'json', limit: 1, countrycodes: 'jp' },
@@ -94,6 +151,8 @@ async function geocodeWithNominatim(address) {
 }
 
 // optional: Distance Matrix（あれば精度UP）、未設定時は Nominatim + ハーバーサイン
+// sortSlips からは呼ばれなくなったが念のため残す
+/*
 async function attachDistance(slips, basePoint) {
   const { GOOGLE_MAPS_API_KEY } = process.env;
 
@@ -154,7 +213,7 @@ async function attachDistance(slips, basePoint) {
     slips.map(async s => {
       const addr = (s.address || '').trim();
       if (!addr) return { ...s, _distText: '', _distValue: null, _durationText: '' };
-      const geo = await geocodeWithNominatim(addr);
+      const geo = await geocodeNominatim(addr);
       if (!geo) return { ...s, _distText: '', _distValue: null, _durationText: '' };
       const meters = haversineMeters(baseLat, baseLng, geo.lat, geo.lng);
       const km = (meters / 1000).toFixed(1);
@@ -163,6 +222,7 @@ async function attachDistance(slips, basePoint) {
   );
   return results;
 }
+*/
 
 function buildOriginParam(basePoint) {
   if (!basePoint) return '';
