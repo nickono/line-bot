@@ -190,9 +190,10 @@ style: "primary",
 height: "sm",
 color: "#06C755",
 action: {
-type: "message",
+type: "postback",
 label: "配達完了にする",
-text: "配達完了：" + slip.key
+data: "done:" + slip.key,
+displayText: "✅ 配達完了"
 }
 }
 ],
